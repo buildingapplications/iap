@@ -8,9 +8,9 @@ cover the full iOS in-app purchase lifecycle:
 - Bootstrap the current user with the backend (authenticated or anonymous).
 - Fetch App Store product metadata through `expo-iap` in production, or build
   mock product cards from configured product IDs in development.
-- Drive native purchases and forward receipts to `POST /v1/iap/purchases/ingest`.
+- Drive native purchases and forward receipts to `POST /iap/v1/purchases/ingest`.
 - Expose a backend-authoritative `entitlements` map to the UI.
-- Restore purchases via `expo-iap` + `POST /v1/iap/restore`.
+- Restore purchases via `expo-iap` + `POST /iap/v1/restore`.
 - Open the native Manage Subscriptions sheet.
 - Transparently retry ingest calls that failed with transient errors, persisted
   across app restarts.
@@ -155,7 +155,7 @@ Behavior:
   merge anonymous purchases into the authenticated account. See
   [Anonymous identities](#anonymous-identities).
 
-### 2. No-auth tenant (`auth_provider = none`)
+### 2. No-auth tenant (`auth_provider = null`)
 
 The backend does not accept bearer tokens for this tenant. **Omit
 `getAccessToken` entirely.** The SDK uses anonymous billing identities only:
@@ -191,7 +191,7 @@ Behavior:
 
 | Field                | Type                                           | Required | Description                                                                                                          |
 | -------------------- | ---------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| `backendUrl`         | `string`                                       | no       | Base URL of the `bilt-billing` backend. Defaults to `https://billing.bilt.me`. Trailing slashes are stripped.        |
+| `backendUrl`         | `string`                                       | no       | Base URL of the `bilt-billing` backend. Defaults to `https://api.bilt.me`. Trailing slashes are stripped.        |
 | `headers`            | `Record<string, string>`                       | no       | Extra headers to include on every backend request. Useful for local tunnels such as ngrok.                          |
 | `tenantAppId`        | `string`                                       | yes      | Sent as `X-Bilt-Tenant-App-Id` on every request. Scopes the call to the correct tenant app.                          |
 | `getAccessToken`     | `() => Promise<string \| null \| undefined>`   | see [Auth modes](#auth-modes) | Required for Supabase-auth tenants (return the Supabase session access token). Omit entirely for no-auth tenants. Return `null`/`undefined` when the user is signed out to fall back to anonymous billing. |
@@ -229,9 +229,10 @@ const config: BiltIapConfig = {
 };
 ```
 
-This is especially useful when a subscription SKU does not contain words like
-`monthly`, `annual`, or `yearly`. In production, `expo-iap` still provides the
-authoritative store metadata.
+Mock type inference now defaults unknown SKUs to `'subs'` and only treats clear
+one-time hints (for example `lifetime`, `one-time`, or `inapp`) as `'in-app'`.
+You can still set `type` explicitly to avoid any ambiguity. In production,
+`expo-iap` still provides the authoritative store metadata.
 
 ## `BiltIapProvider`
 
@@ -243,7 +244,7 @@ On mount the provider:
 
 1. Resolves the billing principal: authenticated if `getAccessToken` returns
    a token, otherwise anonymous (if enabled).
-2. Calls `GET /v1/iap/bootstrap` to obtain the `appAccountToken` and the
+2. Calls `GET /iap/v1/bootstrap` to obtain the `appAccountToken` and the
    initial `entitlements` map.
 3. In mock mode, builds product cards from `productIds` and skips native
    StoreKit. When a `productIds` entry is an object, its explicit mock metadata
@@ -294,9 +295,9 @@ API methods:
 | Method                                                 | Description                                                                                                                                                                                                                     |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `purchaseProduct(productId: string): Promise<void>`    | Production: kicks off the native purchase sheet. Mock: sends synthetic proof through the normal ingest route. Throws if the provider has not initialized, the store is unavailable, or the product is not in `products`.        |
-| `restorePurchases(): Promise<void>`                    | Production: calls `ExpoIap.restorePurchases()`, re-ingests every active purchase it finds, then calls `POST /v1/iap/restore`. Mock: calls backend restore directly. Updates `entitlements`.                                     |
+| `restorePurchases(): Promise<void>`                    | Production: calls `ExpoIap.restorePurchases()`, re-ingests every active purchase it finds, then calls `POST /iap/v1/restore`. Mock: calls backend restore directly. Updates `entitlements`.                                     |
 | `linkAnonymousPurchasesToCurrentUser(): Promise<void>` | Merge the current anonymous purchase history into the signed-in user. See [Anonymous identities](#anonymous-identities). Throws if not anonymous or no access token is available.                                               |
-| `refreshEntitlements(): Promise<void>`                 | Calls `GET /v1/iap/entitlements` and updates state. Never throws — errors are piped to `onError`.                                                                                                                               |
+| `refreshEntitlements(): Promise<void>`                 | Calls `GET /iap/v1/entitlements` and updates state. Never throws — errors are piped to `onError`.                                                                                                                               |
 | `hasEntitlement(code: string): boolean`                | Shortcut for `entitlements[code]?.active === true`.                                                                                                                                                                             |
 | `openManageSubscriptions(): Promise<void>`             | iOS: opens the native Manage Subscriptions sheet via `ExpoIap.deepLinkToSubscriptions`. Android: no-op without extra args.                                                                                                      |
 | `flushRetryQueue(): Promise<void>`                     | Force-flush the retry queue now (e.g. when the app regains connectivity).                                                                                                                                                       |
@@ -453,7 +454,7 @@ rethrow so callers can show per-action UI.
 
 ## Offline retry queue
 
-Ingest calls (`POST /v1/iap/purchases/ingest`) are critical — they turn a
+Ingest calls (`POST /iap/v1/purchases/ingest`) are critical — they turn a
 real StoreKit receipt into an entitlement. If one fails with a
 `retryable: true` error, the payload is enqueued in the retry queue and
 persisted to `AsyncStorage` under the key `@biltme/iap:retry-queue`.
@@ -491,10 +492,10 @@ Retry behavior:
 - **Restore**: calls `ExpoIap.restorePurchases()` first (so the native
   receipt refresh happens), then `ExpoIap.getAvailablePurchases` with
   `onlyIncludeActiveItemsIOS: true`, re-ingests each unique transaction,
-  then hits `POST /v1/iap/restore` to let the backend reconcile.
+  then hits `POST /iap/v1/restore` to let the backend reconcile.
 - **Mock runtime**: skips native store calls, builds mock product cards
   from `productIds`, and sends synthetic purchase proof through
-  `POST /v1/iap/purchases/ingest`. Entitlements still come only from the
+  `POST /iap/v1/purchases/ingest`. Entitlements still come only from the
   backend. Mock product metadata can be supplied explicitly so the UI does not
   have to infer subscription-vs-in-app from the product id string.
 
@@ -514,11 +515,11 @@ environment headers default to `production`, but the SDK always sends one.
 
 | Method | Path                       | When                                                  |
 | ------ | -------------------------- | ----------------------------------------------------- |
-| GET    | `/v1/iap/bootstrap`        | Mount.                                                |
-| GET    | `/v1/iap/entitlements`     | Foreground, `refreshEntitlements()`.                  |
-| POST   | `/v1/iap/purchases/ingest` | After every `purchase-updated` and during restore.    |
-| POST   | `/v1/iap/restore`          | `restorePurchases()`.                                 |
-| POST   | `/v1/iap/link`             | `linkAnonymousPurchasesToCurrentUser()`.              |
+| GET    | `/iap/v1/bootstrap`        | Mount.                                                |
+| GET    | `/iap/v1/entitlements`     | Foreground, `refreshEntitlements()`.                  |
+| POST   | `/iap/v1/purchases/ingest` | After every `purchase-updated` and during restore.    |
+| POST   | `/iap/v1/restore`          | `restorePurchases()`.                                 |
+| POST   | `/iap/v1/link`             | `linkAnonymousPurchasesToCurrentUser()`.              |
 
 Responses follow the shape `{ ok: true, data: T }` on success and
 `{ ok: false, error: { code, message, retryable?, requestId? } }` on
