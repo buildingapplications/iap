@@ -119,17 +119,20 @@ function PaywallScreen() {
 
 ## Auth modes
 
-Each tenant app on the `bilt-billing` backend is configured with one of two
-auth providers. The SDK config you pass **must match the tenant's configured
-provider**, otherwise every authenticated request fails with
+Each tenant app on the `bilt-billing` backend is configured for either bearer
+auth (Supabase or Bilt) or no auth. The SDK config you pass **must match the
+tenant's configuration**, otherwise every authenticated request fails with
 `unauthorized`.
 
-### 1. Supabase-auth tenant (`auth_provider = supabase`)
+### 1. Bearer-auth tenant (`auth_provider = supabase` or `bilt`)
 
-The backend verifies incoming requests by validating a Supabase JWT against
-the tenant's configured `jwt_issuer` (which encodes the Supabase project
-ref). You **must** provide `getAccessToken` and return the current Supabase
-session's access token:
+The backend validates the incoming access token against the tenant's
+configured `jwt_issuer`. The SDK is provider-agnostic: `getAccessToken` is an
+opaque token source, so the same wiring works whether the tenant uses Supabase
+or Bilt auth — only where you read the session token differs. You **must**
+provide `getAccessToken` and return the current session's access token.
+
+Supabase:
 
 ```tsx
 import { supabase } from './supabaseClient';
@@ -138,6 +141,21 @@ const config: BiltIapConfig = {
   tenantAppId: '...',
   getAccessToken: async () => {
     const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  },
+  productIds: [{ id: 'com.example.pro.monthly' }],
+};
+```
+
+Bilt (`@bilt/backend`):
+
+```tsx
+import { bilt } from './biltClient';
+
+const config: BiltIapConfig = {
+  tenantAppId: '...',
+  getAccessToken: async () => {
+    const { data } = await bilt.auth.getSession();
     return data.session?.access_token ?? null;
   },
   productIds: [{ id: 'com.example.pro.monthly' }],
@@ -179,7 +197,7 @@ Behavior:
 
 - **Providing `getAccessToken` on a no-auth tenant**: the token is sent but
   the backend rejects it (wrong provider). All requests fail.
-- **Omitting `getAccessToken` on a Supabase tenant**: the SDK runs in
+- **Omitting `getAccessToken` on a bearer-auth tenant**: the SDK runs in
   anonymous-only mode, which is fine for signed-out users but means signed-in
   users never become authenticated billing principals — they keep buying as
   anonymous identities forever.
@@ -194,7 +212,7 @@ Behavior:
 | `backendUrl`         | `string`                                       | no       | Base URL of the `bilt-billing` backend. Defaults to `https://api.bilt.me`. Trailing slashes are stripped.        |
 | `headers`            | `Record<string, string>`                       | no       | Extra headers to include on every backend request. Useful for local tunnels such as ngrok.                          |
 | `tenantAppId`        | `string`                                       | yes      | Sent as `X-Bilt-Tenant-App-Id` on every request. Scopes the call to the correct tenant app.                          |
-| `getAccessToken`     | `() => Promise<string \| null \| undefined>`   | see [Auth modes](#auth-modes) | Required for Supabase-auth tenants (return the Supabase session access token). Omit entirely for no-auth tenants. Return `null`/`undefined` when the user is signed out to fall back to anonymous billing. |
+| `getAccessToken`     | `() => Promise<string \| null \| undefined>`   | see [Auth modes](#auth-modes) | Required for bearer-auth tenants (Supabase or Bilt); return the current session's access token. Omit entirely for no-auth tenants. Return `null`/`undefined` when the user is signed out to fall back to anonymous billing. |
 | `anonymousIdentity`  | `{ enabled?: boolean; storageKey?: string }`   | no       | Enabled by default. Generates a stable anonymous billing principal for purchase-before-signup flows.                 |
 | `billingEnvironment` | `'mock' \| 'production'`                       | no       | Explicit runtime environment. If omitted, `__DEV__ === true` uses `mock`; otherwise `production`.                    |
 | `productIds`         | `ConfiguredProduct[]`                          | yes      | Product config to fetch from the store. In mock mode, entries can also provide explicit `type`, `title`, `description`, `displayPrice`, `price`, and `currency`. |
